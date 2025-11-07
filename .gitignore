@@ -1,0 +1,57 @@
+# Environment files
+.env
+.env.local
+.env.production
+
+# Secrets
+secrets/
+*.txt
+
+# Docker volumes data (not tracked)
+volumes/
+
+# Logs
+logs/
+*.log
+
+# Backups
+backups/
+*.sql
+*.sql.gz
+
+# WordPress uploads (should be backed up separately)
+wordpress/uploads/
+
+# OS files
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Node modules (if any)
+node_modules/
+
+# Generated nginx config
+nginx/conf.d/*.conf
+!nginx/conf.d/.gitkeep
+
+# Keep templates
+!nginx/conf.d/*.conf.template

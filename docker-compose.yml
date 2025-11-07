@@ -1,0 +1,258 @@
+services:
+  # MariaDB Database Service
+  mariadb:
+    image: mariadb:11.2
+    container_name: ${PROJECT_NAME:-wordpress}-mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wpuser
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+      TZ: Asia/Jakarta
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./mariadb/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    networks:
+      - backend
+    secrets:
+      - db_root_password
+      - db_password
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # PHP-FPM Service
+  php-fpm:
+    build:
+      context: ./php
+      dockerfile: Dockerfile
+      args:
+        PHP_VERSION: "8.3"
+    container_name: ${PROJECT_NAME:-wordpress}-php-fpm
+    restart: unless-stopped
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wpuser
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
+      TZ: Asia/Jakarta
+    extra_hosts:
+      - "${WORDPRESS_DOMAIN:-localhost}:${WORDPRESS_LOCAL_IP:-127.0.0.1}"
+    volumes:
+      - wp_data:/var/www/html
+      - ./php/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
+      - ./php/php-fpm.d/www.conf:/usr/local/etc/php-fpm.d/www.conf:ro
+    networks:
+      - backend
+      - frontend
+    secrets:
+      - db_password
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Nginx Web Server
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: ${PROJECT_NAME:-wordpress}-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      TZ: Asia/Jakarta
+    volumes:
+      - wp_data:/var/www/html:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - frontend
+    depends_on:
+      php-fpm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+
+  # WordPress CLI for initialization and maintenance
+  wp-cli:
+    image: wordpress:cli-2.10-php8.3
+    container_name: ${PROJECT_NAME:-wordpress}-wp-cli
+    user: "33:33"  # www-data user
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wpuser
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
+      WORDPRESS_DOMAIN: ${WORDPRESS_DOMAIN:-localhost}
+      WORDPRESS_LOCAL_IP: ${WORDPRESS_LOCAL_IP:-127.0.0.1}
+      TZ: Asia/Jakarta
+    extra_hosts:
+      - "${WORDPRESS_DOMAIN:-localhost}:${WORDPRESS_LOCAL_IP:-127.0.0.1}"
+    volumes:
+      - wp_data:/var/www/html
+      - ./scripts:/scripts:ro
+    networks:
+      - backend
+    secrets:
+      - db_password
+      - wp_admin_password
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    profiles:
+      - tools
+    command: /bin/sh -c "echo 'WP-CLI ready. Run scripts manually or use docker compose run wp-cli wp ...'"
+
+  # Redis Cache Service
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME:-wordpress}-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    environment:
+      TZ: Asia/Jakarta
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Database Backup Service
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME:-wordpress}-backup
+    restart: unless-stopped
+    environment:
+      MYSQL_HOST: mariadb
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wpuser
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+      BACKUP_RETENTION_DAYS: 7
+      TZ: Asia/Jakarta
+    volumes:
+      - backups:/backups
+      - ./scripts/backup-db.sh:/usr/local/bin/backup-db.sh:ro
+    networks:
+      - backend
+    secrets:
+      - db_password
+      - db_root_password
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+
+  # Adminer - Database Admin Tool (disabled by default)
+  adminer:
+    image: adminer:4.8.1
+    container_name: ${PROJECT_NAME:-wordpress}-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: mariadb
+      ADMINER_DESIGN: nette
+      TZ: Asia/Jakarta
+    networks:
+      - backend
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    profiles:
+      - tools
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  db_data:
+    driver: local
+    name: ${PROJECT_NAME:-wordpress}_db_data
+  wp_data:
+    driver: local
+    name: ${PROJECT_NAME:-wordpress}_wp_data
+  nginx_logs:
+    driver: local
+    name: ${PROJECT_NAME:-wordpress}_nginx_logs
+  backups:
+    driver: local
+    name: ${PROJECT_NAME:-wordpress}_backups
+  redis_data:
+    driver: local
+    name: ${PROJECT_NAME:-wordpress}_redis_data
+
+secrets:
+  db_root_password:
+    file: ./secrets/db_root_password.txt
+  db_password:
+    file: ./secrets/db_password.txt
+  wp_admin_password:
+    file: ./secrets/wp_admin_password.txt
+
