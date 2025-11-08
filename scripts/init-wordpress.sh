@@ -122,18 +122,32 @@ wp config set EMPTY_TRASH_DAYS 7 --raw --allow-root
 # Add Cloudflare compatibility
 wp config set WP_PROXY_BYPASS_HOSTS "${WORDPRESS_LOCAL_IP}" --allow-root
 
+# Configure Redis Object Cache
+echo -e "${GREEN}Configuring Redis Object Cache...${NC}"
+wp config set WP_REDIS_HOST 'redis' --allow-root
+wp config set WP_REDIS_PORT 6379 --raw --allow-root
+wp config set WP_REDIS_TIMEOUT 1 --raw --allow-root
+wp config set WP_REDIS_READ_TIMEOUT 1 --raw --allow-root
+wp config set WP_REDIS_DATABASE 0 --raw --allow-root
+
+# Enable Redis
+wp redis enable --allow-root || echo "Redis will be enabled manually"
+
+# Fix REST API and Loopback for reverse proxy setup
+wp config set WP_HTTP_BLOCK_EXTERNAL false --raw --allow-root
+wp config set WP_ACCESSIBLE_HOSTS 'api.wordpress.org,*.github.com,${WORDPRESS_DOMAIN},localhost' --allow-root
+
 echo -e "${GREEN}Installing essential plugins...${NC}"
 
 # Install and activate essential security plugins
 wp plugin install wordfence --activate --allow-root || echo "Failed to install Wordfence"
 wp plugin install limit-login-attempts-reloaded --activate --allow-root || echo "Failed to install Limit Login Attempts"
 
-# Install and activate performance plugins
-wp plugin install wp-super-cache --activate --allow-root || echo "Failed to install WP Super Cache"
-wp plugin install autoptimize --activate --allow-root || echo "Failed to install Autoptimize"
-
 # Install and activate backup plugin
 wp plugin install updraftplus --activate --allow-root || echo "Failed to install UpdraftPlus"
+
+# Install and activate Redis Object Cache
+wp plugin install redis-cache --activate --allow-root || echo "Failed to install Redis Cache"
 
 # Install Indonesian language theme (optional)
 # wp theme install twentytwentyfour --activate --allow-root

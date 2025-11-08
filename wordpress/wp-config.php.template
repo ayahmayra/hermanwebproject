@@ -127,9 +127,10 @@ define( 'WP_AUTO_UPDATE_CORE', 'minor' );
 // define( 'DISABLE_WP_CRON', true );
 
 /**
- * Increase WordPress HTTP timeout
+ * Fix REST API and Loopback for Cloudflare/Reverse Proxy Setup
  */
 define( 'WP_HTTP_BLOCK_EXTERNAL', false );
+define( 'WP_ACCESSIBLE_HOSTS', 'api.wordpress.org,*.github.com,%%DOMAIN%%,localhost' );
 
 /**
  * WordPress Post Revisions
@@ -164,14 +165,14 @@ define( 'FS_CHMOD_DIR', ( 0755 & ~ umask() ) );
 define( 'FS_CHMOD_FILE', ( 0644 & ~ umask() ) );
 
 /**
- * Redis Object Cache (optional - if Redis is configured)
+ * Redis Object Cache (ENABLED for optimal performance)
  */
-// define( 'WP_REDIS_HOST', 'redis' );
-// define( 'WP_REDIS_PORT', 6379 );
-// define( 'WP_REDIS_TIMEOUT', 1 );
-// define( 'WP_REDIS_READ_TIMEOUT', 1 );
-// define( 'WP_REDIS_DATABASE', 0 );
-// define( 'WP_CACHE_KEY_SALT', '%%DOMAIN%%' );
+define( 'WP_REDIS_HOST', 'redis' );
+define( 'WP_REDIS_PORT', 6379 );
+define( 'WP_REDIS_TIMEOUT', 1 );
+define( 'WP_REDIS_READ_TIMEOUT', 1 );
+define( 'WP_REDIS_DATABASE', 0 );
+define( 'WP_CACHE_KEY_SALT', '%%DOMAIN%%' );
 
 /**
  * Cookie Domain

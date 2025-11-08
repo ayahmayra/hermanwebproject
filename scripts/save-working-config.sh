@@ -1,121 +1,79 @@
 #!/bin/bash
-
-# Save Current Working Configuration
-# Backs up all critical configuration files from production
+################################################################################
+# Save Working Configuration Script
+# 
+# This script saves the current working wp-config.php as a backup template
+# Usage: ./scripts/save-working-config.sh
+################################################################################
 
 set -e
 
+# Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Save Working Configuration${NC}"
-echo -e "${BLUE}========================================${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  Save Working Configuration${NC}"
+echo -e "${GREEN}========================================${NC}"
 echo ""
 
-# Check directory
-if [ ! -f "docker-compose.yml" ]; then
-    echo -e "${RED}Error: Run from project root!${NC}"
+# Check if docker compose is running
+if ! docker compose ps | grep -q "php-fpm.*running"; then
+    echo -e "${YELLOW}Warning: PHP-FPM container is not running${NC}"
+    echo "Start containers first: docker compose up -d"
     exit 1
 fi
 
 # Create backup directory
-BACKUP_DIR="config-backups/$(date +%Y%m%d-%H%M%S)"
+BACKUP_DIR="backups/configs"
 mkdir -p "$BACKUP_DIR"
 
-echo -e "${YELLOW}Saving configuration to: $BACKUP_DIR${NC}"
-echo ""
+# Timestamp for backup
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+echo "Saving current working configuration..."
 
 # Save wp-config.php
-echo -e "${GREEN}[1/5] Saving wp-config.php...${NC}"
-if docker compose exec php-fpm test -f /var/www/html/wp-config.php; then
-    docker cp bpkad-php-fpm:/var/www/html/wp-config.php "$BACKUP_DIR/wp-config.php"
-    echo -e "${GREEN}✓ wp-config.php saved${NC}"
-else
-    echo -e "${RED}✗ wp-config.php not found${NC}"
+docker compose exec php-fpm cat /var/www/html/wp-config.php > "$BACKUP_DIR/wp-config-${TIMESTAMP}.php"
+echo -e "${GREEN}✓${NC} Saved wp-config.php to $BACKUP_DIR/wp-config-${TIMESTAMP}.php"
+
+# Save as latest
+cp "$BACKUP_DIR/wp-config-${TIMESTAMP}.php" "$BACKUP_DIR/wp-config-latest.php"
+echo -e "${GREEN}✓${NC} Saved as wp-config-latest.php"
+
+# Save .htaccess if exists
+if docker compose exec php-fpm test -f /var/www/html/.htaccess; then
+    docker compose exec php-fpm cat /var/www/html/.htaccess > "$BACKUP_DIR/htaccess-${TIMESTAMP}.txt"
+    echo -e "${GREEN}✓${NC} Saved .htaccess to $BACKUP_DIR/htaccess-${TIMESTAMP}.txt"
 fi
-echo ""
+
+# Save plugin list
+echo "Saving active plugins list..."
+docker compose run --rm wp-cli wp plugin list --status=active --format=json --allow-root > "$BACKUP_DIR/plugins-active-${TIMESTAMP}.json"
+echo -e "${GREEN}✓${NC} Saved active plugins list"
 
 # Save WordPress options
-echo -e "${GREEN}[2/5] Saving WordPress options...${NC}"
-docker compose run --rm wp-cli wp option get home --allow-root > "$BACKUP_DIR/wp-home-url.txt" 2>/dev/null || echo "N/A" > "$BACKUP_DIR/wp-home-url.txt"
-docker compose run --rm wp-cli wp option get siteurl --allow-root > "$BACKUP_DIR/wp-siteurl.txt" 2>/dev/null || echo "N/A" > "$BACKUP_DIR/wp-siteurl.txt"
-echo -e "${GREEN}✓ WordPress options saved${NC}"
+echo "Saving WordPress options..."
+docker compose run --rm wp-cli wp option get siteurl --allow-root > "$BACKUP_DIR/options-${TIMESTAMP}.txt"
+docker compose run --rm wp-cli wp option get home --allow-root >> "$BACKUP_DIR/options-${TIMESTAMP}.txt"
+echo -e "${GREEN}✓${NC} Saved WordPress options"
+
+# Save Redis status if plugin exists
+if docker compose run --rm wp-cli wp plugin is-installed redis-cache --allow-root 2>/dev/null; then
+    docker compose run --rm wp-cli wp redis status --allow-root > "$BACKUP_DIR/redis-status-${TIMESTAMP}.txt" 2>/dev/null || true
+    echo -e "${GREEN}✓${NC} Saved Redis status"
+fi
+
 echo ""
-
-# Save active plugins
-echo -e "${GREEN}[3/5] Saving active plugins list...${NC}"
-docker compose run --rm wp-cli wp plugin list --status=active --format=table --allow-root > "$BACKUP_DIR/active-plugins.txt" 2>/dev/null || echo "N/A" > "$BACKUP_DIR/active-plugins.txt"
-echo -e "${GREEN}✓ Plugins list saved${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Configuration saved successfully!${NC}"
+echo -e "${GREEN}========================================${NC}"
 echo ""
-
-# Save service status
-echo -e "${GREEN}[4/5] Saving service status...${NC}"
-docker compose ps > "$BACKUP_DIR/docker-services-status.txt"
-echo -e "${GREEN}✓ Service status saved${NC}"
+echo "Backup location: $BACKUP_DIR/"
+echo "Files saved:"
+echo "  - wp-config-${TIMESTAMP}.php"
+echo "  - wp-config-latest.php"
+echo "  - plugins-active-${TIMESTAMP}.json"
+echo "  - options-${TIMESTAMP}.txt"
 echo ""
-
-# Save configuration summary
-echo -e "${GREEN}[5/5] Creating configuration summary...${NC}"
-cat > "$BACKUP_DIR/CONFIG_SUMMARY.md" << EOF
-# Configuration Backup Summary
-
-**Date**: $(date)
-**Server**: $(hostname)
-**User**: $(whoami)
-
-## Services Status
-\`\`\`
-$(docker compose ps)
-\`\`\`
-
-## WordPress URLs
-- Home: $(cat $BACKUP_DIR/wp-home-url.txt)
-- Siteurl: $(cat $BACKUP_DIR/wp-siteurl.txt)
-
-## Active Plugins
-\`\`\`
-$(cat $BACKUP_DIR/active-plugins.txt)
-\`\`\`
-
-## wp-config.php First 20 Lines
-\`\`\`php
-$(head -20 $BACKUP_DIR/wp-config.php)
-\`\`\`
-
-## Critical Configuration
-- HTTPS Detection: $(grep -q "HTTP_X_FORWARDED_PROTO" $BACKUP_DIR/wp-config.php && echo "✓ Present" || echo "✗ Missing")
-- Redis Service: $(docker compose ps redis | grep -q "healthy" && echo "✓ Healthy" || echo "✗ Not healthy")
-- Backup Service: $(docker compose ps backup | grep -q "Up" && echo "✓ Running" || echo "✗ Not running")
-
-## Notes
-This backup contains the working configuration as of $(date).
-All critical services are operational and configuration is tested.
-EOF
-
-echo -e "${GREEN}✓ Summary created${NC}"
-echo ""
-
-echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}  Configuration Saved Successfully!${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo ""
-
-echo -e "${YELLOW}Backup location:${NC}"
-echo "$BACKUP_DIR"
-echo ""
-
-echo -e "${YELLOW}Files saved:${NC}"
-ls -lh "$BACKUP_DIR/"
-echo ""
-
-echo -e "${YELLOW}To restore this configuration:${NC}"
-echo "1. docker cp $BACKUP_DIR/wp-config.php bpkad-php-fpm:/var/www/html/wp-config.php"
-echo "2. docker compose restart php-fpm"
-echo ""
-
-echo -e "${GREEN}✅ Complete!${NC}"
-
